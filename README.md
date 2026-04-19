@@ -4,11 +4,33 @@ Official Rust client for the ONQL database server.
 
 ## Installation
 
+### From crates.io
+
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
 onql-client = "0.1"
+```
+
+Or via the CLI:
+
+```bash
+cargo add onql-client
+```
+
+### From GitHub (latest `main`)
+
+```toml
+[dependencies]
+onql-client = { git = "https://github.com/ONQL/onqlclient-rust" }
+```
+
+### Pinned to a release tag
+
+```toml
+[dependencies]
+onql-client = { git = "https://github.com/ONQL/onqlclient-rust", tag = "v0.1.0" }
 ```
 
 ## Quick Start
