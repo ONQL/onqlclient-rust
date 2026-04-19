@@ -1,0 +1,17 @@
+[package]
+name = "onql-client"
+version = "0.1.0"
+edition = "2021"
+description = "Async Rust client for the ONQL TCP protocol"
+license = "MIT"
+repository = "https://github.com/ONQL/onqlclient-rust"
+homepage = "https://onql.org"
+readme = "README.md"
+keywords = ["onql", "database", "client", "tcp"]
+categories = ["database", "network-programming"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
