@@ -34,15 +34,19 @@ use onql_client::ONQLClient;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ONQLClient::connect("localhost", 5656).await?;
 
-    client.insert("mydb.users",
+    client.insert("mydb", "users",
         &serde_json::json!({ "id": "u1", "name": "John", "age": 30 })).await?;
 
-    let rows = client.onql("select * from mydb.users where age > 18").await?;
+    let rows = client.onql("mydb.users[age>18]").await?;
     println!("{rows}");
 
-    client.update("mydb.users.u1",
-        &serde_json::json!({ "age": 31 })).await?;
-    client.delete("mydb.users.u1").await?;
+    let q = ONQLClient::build(
+        "mydb.users[id=$1].id",
+        &[serde_json::json!("u1")]);
+    client.update("mydb", "users",
+        &serde_json::json!({ "age": 31 }), &q).await?;
+
+    client.delete_with::<&str>("mydb", "users", "", "default", &["u1"]).await?;
 
     client.close().await?;
     Ok(())
@@ -71,14 +75,13 @@ standard payload envelope for you and unwraps the `{error, data}` response —
 returning an `Err(Error::Protocol)` on a non-empty `error` field, or the
 decoded `data` (a `serde_json::Value`) on success.
 
-The `path` argument is a **dotted string**:
+`db` is passed explicitly to `insert` / `update` / `delete`. `onql` takes a
+fully-qualified ONQL expression.
 
-| Path shape | Meaning |
-|------------|---------|
-| `"mydb.users"` | Table (used by `insert`) |
-| `"mydb.users.u1"` | Record id `u1` (used by `update` / `delete`) |
+`query` arguments are **ONQL expression strings**, e.g.
+`mydb.users[id="u1"].id`.
 
-### `client.insert(path, data) -> Result<serde_json::Value>`
+### `client.insert(db, table, data) -> Result<serde_json::Value>`
 
 Insert a **single** record. `data` is any `serde::Serialize`.
 
@@ -88,29 +91,32 @@ use serde::Serialize;
 #[derive(Serialize)]
 struct User { id: String, name: String, age: u32 }
 
-client.insert("mydb.users",
+client.insert("mydb", "users",
     &User { id: "u1".into(), name: "John".into(), age: 30 }).await?;
 ```
 
-### `client.update(path, data)` / `client.update_with(path, data, protopass)`
+### `client.update(db, table, data, query)` / `client.update_with(db, table, data, query, protopass, ids)`
 
-Update the record at `path`.
+Update records matching `query` (or `ids`).
 
 ```rust
-client.update("mydb.users.u1",
-    &serde_json::json!({ "age": 31 })).await?;
+client.update("mydb", "users",
+    &serde_json::json!({ "age": 31 }),
+    "mydb.users[id=\"u1\"].id").await?;
 
-client.update_with("mydb.users.u1",
-    &serde_json::json!({ "active": false }),
-    "admin").await?;
+client.update_with::<_, &str>("mydb", "users",
+    &serde_json::json!({ "age": 31 }),
+    "", "default", &["u1"]).await?;
 ```
 
-### `client.delete(path)` / `client.delete_with(path, protopass)`
+### `client.delete(db, table, query)` / `client.delete_with(db, table, query, protopass, ids)`
 
-Delete the record at `path`.
+Delete records matching `query` (or `ids`).
 
 ```rust
-client.delete("mydb.users.u1").await?;
+client.delete("mydb", "users", "mydb.users[id=\"u1\"].id").await?;
+
+client.delete_with::<&str>("mydb", "users", "", "default", &["u1"]).await?;
 ```
 
 ### `client.onql(query)` / `client.onql_with(query, protopass, ctxkey, ctxvalues)`
@@ -118,17 +124,16 @@ client.delete("mydb.users.u1").await?;
 Run a raw ONQL query.
 
 ```rust
-let rows = client.onql("select * from mydb.users where age > 18").await?;
+let rows = client.onql("mydb.users[age>18]").await?;
 ```
 
 ### `ONQLClient::build(query, values) -> String`
 
-Replace `$1`, `$2`, … placeholders with `serde_json::Value`s. Strings are
-automatically double-quoted; numbers and booleans are inlined verbatim.
+Replace `$1`, `$2`, … placeholders with `serde_json::Value`s.
 
 ```rust
 let q = ONQLClient::build(
-    "select * from mydb.users where name = $1 and age > $2",
+    "mydb.users[name=$1 and age>$2]",
     &[serde_json::json!("John"), serde_json::json!(18)],
 );
 let rows = client.onql(&q).await?;

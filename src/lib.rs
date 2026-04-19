@@ -212,9 +212,9 @@ impl ONQLClient {
 
     // ----- ORM-style API ---------------------------------------------------
     //
-    // `path` is a dotted string:
-    //   "mydb.users"        -> table `users` in database `mydb`
-    //   "mydb.users.u1"     -> record with id `u1`
+    // `query` arguments are ONQL expression strings, e.g.
+    //   "mydb.users[id=\"u1\"].id"
+    //   "mydb.orders[status=\"pending\"]"
 
     /// Parse the standard `{error, data}` envelope.
     pub fn process_result(raw: &str) -> Result<serde_json::Value> {
@@ -229,13 +229,13 @@ impl ONQLClient {
         Ok(parsed.get("data").cloned().unwrap_or(serde_json::Value::Null))
     }
 
-    /// Insert a single record at `path` (e.g. `"mydb.users"`).
+    /// Insert a single record into `db.table`.
     pub async fn insert<T: serde::Serialize>(
         &self,
-        path: &str,
+        db: &str,
+        table: &str,
         data: &T,
     ) -> Result<serde_json::Value> {
-        let (db, table, _) = parse_path(path, false)?;
         let payload = serde_json::json!({
             "db": db,
             "table": table,
@@ -246,53 +246,65 @@ impl ONQLClient {
         Self::process_result(&resp.payload)
     }
 
-    /// Update the record at `path` (e.g. `"mydb.users.u1"`).
+    /// Update records in `db.table` matching `query`. Uses
+    /// `protopass = "default"` and no explicit ids.
     pub async fn update<D: serde::Serialize>(
         &self,
-        path: &str,
+        db: &str,
+        table: &str,
         data: &D,
+        query: &str,
     ) -> Result<serde_json::Value> {
-        self.update_with(path, data, "default").await
+        self.update_with::<D, &str>(db, table, data, query, "default", &[]).await
     }
 
-    /// Update the record at `path` with a custom `protopass`.
-    pub async fn update_with<D: serde::Serialize>(
+    /// Update records in `db.table` with a custom `protopass` and optional ids.
+    pub async fn update_with<D: serde::Serialize, S: serde::Serialize>(
         &self,
-        path: &str,
+        db: &str,
+        table: &str,
         data: &D,
+        query: &str,
         protopass: &str,
+        ids: &[S],
     ) -> Result<serde_json::Value> {
-        let (db, table, id) = parse_path(path, true)?;
         let payload = serde_json::json!({
             "db": db,
             "table": table,
             "records": data,
-            "query": "",
+            "query": query,
             "protopass": protopass,
-            "ids": [id],
+            "ids": ids,
         })
         .to_string();
         let resp = self.send_request("update", &payload).await?;
         Self::process_result(&resp.payload)
     }
 
-    /// Delete the record at `path` (e.g. `"mydb.users.u1"`).
-    pub async fn delete(&self, path: &str) -> Result<serde_json::Value> {
-        self.delete_with(path, "default").await
+    /// Delete records in `db.table` matching `query`.
+    pub async fn delete(
+        &self,
+        db: &str,
+        table: &str,
+        query: &str,
+    ) -> Result<serde_json::Value> {
+        self.delete_with::<&str>(db, table, query, "default", &[]).await
     }
 
-    pub async fn delete_with(
+    pub async fn delete_with<S: serde::Serialize>(
         &self,
-        path: &str,
+        db: &str,
+        table: &str,
+        query: &str,
         protopass: &str,
+        ids: &[S],
     ) -> Result<serde_json::Value> {
-        let (db, table, id) = parse_path(path, true)?;
         let payload = serde_json::json!({
             "db": db,
             "table": table,
-            "query": "",
+            "query": query,
             "protopass": protopass,
-            "ids": [id],
+            "ids": ids,
         })
         .to_string();
         let resp = self.send_request("delete", &payload).await?;
@@ -344,30 +356,6 @@ impl ONQLClient {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Parse `"db.table"` or `"db.table.id"` into `(db, table, id)`.
-fn parse_path(path: &str, require_id: bool) -> Result<(String, String, String)> {
-    if path.is_empty() {
-        return Err(Error::Protocol(
-            "path must be a non-empty string like \"db.table\" or \"db.table.id\"".into(),
-        ));
-    }
-    let mut parts = path.splitn(3, '.');
-    let db = parts.next().unwrap_or("").to_string();
-    let table = parts.next().unwrap_or("").to_string();
-    let id = parts.next().unwrap_or("").to_string();
-    if db.is_empty() || table.is_empty() {
-        return Err(Error::Protocol(format!(
-            "path \"{path}\" must contain at least \"db.table\""
-        )));
-    }
-    if require_id && id.is_empty() {
-        return Err(Error::Protocol(format!(
-            "path \"{path}\" must include a record id: \"db.table.id\""
-        )));
-    }
-    Ok((db, table, id))
-}
-
 fn generate_request_id() -> String {
     let id = uuid::Uuid::new_v4();
     id.simple().to_string()[..8].to_owned()
@@ -388,13 +376,4 @@ mod tests {
         assert!(rid.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
-    #[test]
-    fn path_parsing() {
-        assert_eq!(parse_path("mydb.users", false).unwrap(),
-                   ("mydb".into(), "users".into(), "".into()));
-        assert_eq!(parse_path("mydb.users.u1", true).unwrap(),
-                   ("mydb".into(), "users".into(), "u1".into()));
-        assert!(parse_path("mydb", false).is_err());
-        assert!(parse_path("mydb.users", true).is_err());
-    }
 }
